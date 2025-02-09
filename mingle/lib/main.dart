@@ -48,7 +48,7 @@ class MyHomePage extends StatefulWidget {
   State<MyHomePage> createState() => _MyHomePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
+class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   final List<NPC> npcsInRoom = [
     NPC(
       name: 'Min-Su',
@@ -85,6 +85,42 @@ class _MyHomePageState extends State<MyHomePage> {
       ],
       relationship: 0.2,
     ),
+    NPC(
+      name: 'Lee Yeon-joo',
+      portraitPath: 'assets/images/288.jpeg',
+      playerNumber: 288,
+      dialogueOptions: [
+        'We need to be smart about this.',
+        'The VIPs are watching our every move.',
+        'I\'ve figured out a pattern to these games.',
+        'Choose your allies carefully in here.',
+      ],
+      relationship: 0.1,
+    ),
+    NPC(
+      name: 'Choi Sang-woo',
+      portraitPath: 'assets/images/218.jpg',
+      playerNumber: 218,
+      dialogueOptions: [
+        'Sometimes you have to make hard choices.',
+        'Don\'t let emotions cloud your judgment.',
+        'There can only be one winner.',
+        'Trust is a luxury we can\'t afford.',
+      ],
+      relationship: -0.2,
+    ),
+    NPC(
+      name: 'Kang Sae-byeok',
+      portraitPath: 'assets/images/067.jpg',
+      playerNumber: 067,
+      dialogueOptions: [
+        'Stay alert. Watch everyone.',
+        'I work better alone.',
+        'These alliances won\'t last.',
+        'Keep your distance if you want to survive.',
+      ],
+      relationship: 0.0,
+    ),
   ];
 
   bool isSpinning = false;
@@ -97,32 +133,92 @@ class _MyHomePageState extends State<MyHomePage> {
   int? playerRoom;
   bool isPlayerEliminated = false;
   final AudioPlayer _audioPlayer = AudioPlayer();
+  List<String> _debugMessages = [];
+
+  // Update animation controller duration and behavior
+  late AnimationController _spinController;
+  late ScrollController _scrollController;
+  Timer? _autoScrollTimer;
+  
+  // Add this property
+  bool showDebugInfo = false;
+
+  // Add flash animation controller
+  late AnimationController _flashController;
+  late Animation<Color?> _flashAnimation;
+
+  // Add list of audio players for gunfire
+  final List<AudioPlayer> _gunfirePlayers = [];
 
   @override
   void initState() {
     super.initState();
-    // Load the audio file
     _audioPlayer.setAsset('assets/audio/carousel.mp3');
+    
+    _spinController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+    
+    _scrollController = ScrollController();
+
+    // Initialize flash animation
+    _flashController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+
+    _flashAnimation = ColorTween(
+      begin: Colors.purple.withOpacity(0.1),
+      end: Colors.pink.withOpacity(0.3),
+    ).animate(_flashController);
+  }
+
+  void _startAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      if (_scrollController.hasClients) {
+        double newPosition = _scrollController.offset + 5;
+        if (newPosition > _scrollController.position.maxScrollExtent) {
+          newPosition = 0;
+        }
+        _scrollController.jumpTo(newPosition);
+      }
+    });
+  }
+
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+  }
+
+  void _updateDebugInfo(List<String> newMessages) {
+    setState(() {
+      _debugMessages = newMessages;
+    });
   }
 
   void _handleNPCInteraction(NPC npc) {
     setState(() {
+      List<String> debugInfo = [];
       if (isGrouping) {
         if (playerRoom != null) {
-          // Invite NPC to our room
           if (rooms[playerRoom]!.length < requiredGroupSize) {
             invitations[npc] = playerRoom!;
+            debugInfo.add('Invited ${npc.name} to Room $playerRoom');
+          } else {
+            debugInfo.add('Room $playerRoom is full');
           }
         } else if (invitations.containsKey(npc)) {
-          // Accept their invitation
           playerRoom = invitations[npc];
           rooms.putIfAbsent(playerRoom!, () => []).add(npc);
           invitations.remove(npc);
+          debugInfo.add('Accepted invitation to Room $playerRoom');
         }
       }
       
       double changeAmount = (Random().nextDouble() * 0.5) * (Random().nextBool() ? 1 : -1);
       npc.relationship = (npc.relationship + changeAmount).clamp(-1.0, 1.0);
+      _updateDebugInfo(debugInfo);
     });
   }
 
@@ -186,18 +282,21 @@ class _MyHomePageState extends State<MyHomePage> {
     setState(() {
       isSpinning = true;
       isGrouping = false;
-      timeRemaining = 30;
+      timeRemaining = 15;
       rooms.clear();
       playerRoom = null;
+      _updateDebugInfo(['Starting new round...']);
     });
 
-    // Play music during spinning
+    _startAutoScroll();  // Start auto-scrolling
     _audioPlayer.seek(Duration.zero);
     _audioPlayer.play();
 
-    Future.delayed(const Duration(seconds: 3), () {
+    int spinDuration = Random().nextInt(21) + 10;
+
+    Future.delayed(Duration(seconds: spinDuration), () {
       if (mounted) {
-        // Stop music when timer starts
+        _stopAutoScroll();  // Stop auto-scrolling
         _audioPlayer.stop();
         
         setState(() {
@@ -210,30 +309,51 @@ class _MyHomePageState extends State<MyHomePage> {
     });
   }
 
+  void _playGunfire() {
+    final player = AudioPlayer();
+    _gunfirePlayers.add(player);
+    player.setAsset('assets/audio/gunfire.mp3').then((_) {
+      player.play().then((_) {
+        _gunfirePlayers.remove(player);
+        player.dispose();
+      });
+    });
+  }
+
   void _checkElimination() {
-    if (!isGrouping || timeRemaining > 0) return;
-    
     setState(() {
+      List<String> debugInfo = [];
+      List<Future> eliminationDelays = [];
+      int eliminationCount = 0;
+      
       // Check player elimination
       if (playerRoom == null) {
         isPlayerEliminated = true;
+        debugInfo.add('Player eliminated: No room');
+        eliminationCount++;
       } else {
         int totalInRoom = (rooms[playerRoom]?.length ?? 0) + 1;
+        debugInfo.add('Player room $playerRoom has $totalInRoom people (need $requiredGroupSize)');
         if (totalInRoom != requiredGroupSize) {
           isPlayerEliminated = true;
-          // Remove player from room count
           playerRoom = null;
+          debugInfo.add('Player eliminated: Wrong group size');
+          eliminationCount++;
         }
       }
 
       // Check NPC elimination
       for (var npc in npcsInRoom) {
-        if (npc.isEliminated) continue;  // Skip already eliminated NPCs
+        if (npc.isEliminated) {
+          debugInfo.add('${npc.name} already eliminated');
+          continue;
+        }
         
         bool isInValidRoom = false;
         for (var entry in rooms.entries) {
           if (entry.value.contains(npc)) {
             int totalInRoom = entry.value.length + (playerRoom == entry.key ? 1 : 0);
+            debugInfo.add('${npc.name} in room ${entry.key} with $totalInRoom people');
             if (totalInRoom == requiredGroupSize) {
               isInValidRoom = true;
               break;
@@ -243,11 +363,17 @@ class _MyHomePageState extends State<MyHomePage> {
         
         if (!isInValidRoom) {
           npc.isEliminated = true;
-          print('${npc.name} eliminated!'); // Debug print
+          debugInfo.add('${npc.name} eliminated!');
+          eliminationCount++;
         }
       }
 
-      // Clear rooms and invitations for next round
+      // Play gunfire sounds with slight delays
+      for (int i = 0; i < eliminationCount; i++) {
+        Future.delayed(Duration(milliseconds: i * 200), _playGunfire);
+      }
+
+      _debugMessages = debugInfo;
       rooms.clear();
       invitations.clear();
     });
@@ -260,6 +386,7 @@ class _MyHomePageState extends State<MyHomePage> {
         setState(() {
           if (timeRemaining > 0) {
             timeRemaining--;
+            _updateDebugInfo(['Time remaining: $timeRemaining']);
             _updateNPCBehavior();
           } else {
             timer.cancel();
@@ -275,8 +402,10 @@ class _MyHomePageState extends State<MyHomePage> {
     if (!isGrouping || isPlayerEliminated) return;
     
     setState(() {
-      // Leave current room if in one
+      List<String> debugInfo = ['Attempting to join Room $roomNumber'];
+      
       if (playerRoom != null) {
+        debugInfo.add('Leaving Room $playerRoom');
         rooms[playerRoom]?.removeWhere((npc) => invitations.containsKey(npc));
         if (rooms[playerRoom]?.isEmpty ?? false) {
           rooms.remove(playerRoom);
@@ -285,252 +414,338 @@ class _MyHomePageState extends State<MyHomePage> {
       
       playerRoom = roomNumber;
       rooms.putIfAbsent(roomNumber, () => []);
+      debugInfo.add('Joined Room $roomNumber');
+      debugInfo.add('Room has ${rooms[roomNumber]?.length ?? 0} NPCs');
+      
+      _updateDebugInfo(debugInfo);
+    });
+  }
+
+  // Add this method
+  void _toggleDebugInfo() {
+    setState(() {
+      showDebugInfo = !showDebugInfo;
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: ColorFiltered(
-        colorFilter: isPlayerEliminated
-            ? const ColorFilter.matrix([
-                0.2126, 0.7152, 0.0722, 0, 0,
-                0.2126, 0.7152, 0.0722, 0, 0,
-                0.2126, 0.7152, 0.0722, 0, 0,
-                0, 0, 0, 1, 0,
-              ])
-            : const ColorFilter.matrix([
-                1, 0, 0, 0, 0,
-                0, 1, 0, 0, 0,
-                0, 0, 1, 0, 0,
-                0, 0, 0, 1, 0,
-              ]),
-        child: AbsorbPointer(
-          absorbing: isPlayerEliminated,
-          child: Stack(
-            children: [
-              // Carousel-like background
-              Container(
-                decoration: const BoxDecoration(
-                  gradient: RadialGradient(
-                    center: Alignment.center,
-                    colors: [
-                      Color(0xFFFAE3D9), // Light pink
-                      Color(0xFFFFB6B6), // Darker pink
-                    ],
-                    radius: 1.2,
-                  ),
-                ),
-                child: CustomPaint(
-                  painter: CarouselPainter(),
-                  child: Container(),
-                ),
-              ),
-              
-              // Game content
-              Column(
+      body: Stack(  // Change to Stack to properly layer debug info
+        children: [
+          ColorFiltered(
+            colorFilter: isPlayerEliminated
+                ? const ColorFilter.matrix([
+                    0.2126, 0.7152, 0.0722, 0, 0,
+                    0.2126, 0.7152, 0.0722, 0, 0,
+                    0.2126, 0.7152, 0.0722, 0, 0,
+                    0, 0, 0, 1, 0,
+                  ])
+                : const ColorFilter.matrix([
+                    1, 0, 0, 0, 0,
+                    0, 1, 0, 0, 0,
+                    0, 0, 1, 0, 0,
+                    0, 0, 0, 1, 0,
+                  ]),
+            child: AbsorbPointer(
+              absorbing: isPlayerEliminated,
+              child: Stack(
                 children: [
-                  // Game status
+                  // Carousel-like background
                   Container(
-                    padding: const EdgeInsets.all(16),
-                    margin: const EdgeInsets.only(top: 50),
-                    color: Colors.black87,
-                    child: Column(
-                      children: [
-                        if (isSpinning)
-                          const Text('🎠 Platform Spinning...', 
-                            style: TextStyle(color: Colors.white, fontSize: 24)),
-                        if (isGrouping)
-                          Text(
-                            '⚠️ Form groups of $requiredGroupSize! Time: $timeRemaining',
-                            style: TextStyle(
-                              color: timeRemaining < 10 ? Colors.red : Colors.white,
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                      ],
+                    decoration: const BoxDecoration(
+                      gradient: RadialGradient(
+                        center: Alignment.center,
+                        colors: [
+                          Color(0xFFFAE3D9), // Light pink
+                          Color(0xFFFFB6B6), // Darker pink
+                        ],
+                        radius: 1.2,
+                      ),
+                    ),
+                    child: CustomPaint(
+                      painter: CarouselPainter(),
+                      child: Container(),
                     ),
                   ),
-
-                  // Colored doors around the edge
-                  SizedBox(
-                    height: 100,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: 12,
-                      itemBuilder: (context, index) {
-                        final colors = [
-                          Colors.red,
-                          Colors.orange,
-                          Colors.yellow,
-                          Colors.green,
-                          Colors.blue,
-                          Colors.purple,
-                        ];
-                        
-                        bool isPlayerInThisRoom = playerRoom == index;
-                        int peopleInRoom = (rooms[index]?.length ?? 0) + (isPlayerInThisRoom ? 1 : 0);
-                        
-                        return GestureDetector(
-                          onTap: () => _joinRoom(index),
-                          child: Container(
-                            width: 60,
-                            margin: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: colors[index % colors.length],
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: isPlayerInThisRoom ? Colors.white : Colors.transparent,
-                                width: 3,
-                              ),
-                            ),
-                            child: isGrouping ? Center(
-                              child: Text(
-                                '$peopleInRoom',
-                                style: const TextStyle(
-                                  color: Colors.white,
+                  
+                  // Game content
+                  Column(
+                    children: [
+                      // Game status
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        margin: const EdgeInsets.only(top: 50),
+                        color: Colors.black87,
+                        child: Column(
+                          children: [
+                            if (isSpinning)
+                              const Text('🎠 Platform Spinning...', 
+                                style: TextStyle(color: Colors.white, fontSize: 24)),
+                            if (isGrouping)
+                              Text(
+                                '⚠️ Form groups of $requiredGroupSize! Time: $timeRemaining',
+                                style: TextStyle(
+                                  color: timeRemaining < 10 ? Colors.red : Colors.white,
                                   fontSize: 24,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
-                            ) : null,
-                          ),
-                        );
-                      },
-                    ),
+                          ],
+                        ),
+                      ),
+
+                      // Colored doors around the edge
+                      SizedBox(
+                        height: 100,
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          scrollDirection: Axis.horizontal,
+                          itemCount: 12,
+                          itemBuilder: (context, index) {
+                            final colors = [
+                              Colors.red,
+                              Colors.orange,
+                              Colors.yellow,
+                              Colors.green,
+                              Colors.blue,
+                              Colors.purple,
+                            ];
+                            
+                            bool isPlayerInThisRoom = playerRoom == index;
+                            int peopleInRoom = (rooms[index]?.length ?? 0) + (isPlayerInThisRoom ? 1 : 0);
+                            
+                            return GestureDetector(
+                              onTap: () => _joinRoom(index),
+                              child: Container(
+                                width: 60,
+                                margin: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: colors[index % colors.length],
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: isPlayerInThisRoom ? Colors.white : Colors.transparent,
+                                    width: 3,
+                                  ),
+                                ),
+                                child: isGrouping ? Center(
+                                  child: Text(
+                                    '$peopleInRoom',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ) : null,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+
+                      // NPCs list
+                      Expanded(
+                        child: ListView.builder(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                          itemCount: npcsInRoom.length,
+                          itemBuilder: (context, index) {
+                            final npc = npcsInRoom[index];
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 16),
+                              color: Colors.black87,
+                              child: ListTile(
+                                leading: ColorFiltered(
+                                  colorFilter: npc.isEliminated
+                                      ? const ColorFilter.matrix([
+                                          0.2126, 0.7152, 0.0722, 0, 0,
+                                          0.2126, 0.7152, 0.0722, 0, 0,
+                                          0.2126, 0.7152, 0.0722, 0, 0,
+                                          0, 0, 0, 1, 0,
+                                        ])
+                                      : const ColorFilter.matrix([
+                                          1, 0, 0, 0, 0,
+                                          0, 1, 0, 0, 0,
+                                          0, 0, 1, 0, 0,
+                                          0, 0, 0, 1, 0,
+                                        ]),
+                                  child: CircleAvatar(
+                                    backgroundImage: AssetImage(npc.portraitPath),
+                                    radius: 25,
+                                  ),
+                                ),
+                                title: Text(
+                                  '#${npc.playerNumber} - ${npc.name}${npc.isEliminated ? ' ☠️' : ''}',
+                                  style: TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                    color: npc.isEliminated ? Colors.red : Colors.white,
+                                  ),
+                                ),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      npc.dialogueOptions[Random().nextInt(npc.dialogueOptions.length)],
+                                      style: TextStyle(color: _getRelationshipColor(npc.relationship)),
+                                    ),
+                                    if (isGrouping) ...[
+                                      if (invitations.containsKey(npc))
+                                        Text(
+                                          'Inviting you to Room ${invitations[npc]}',
+                                          style: const TextStyle(color: Colors.yellow),
+                                        ),
+                                      if (rooms.values.any((room) => room.contains(npc)))
+                                        Text(
+                                          'In Room ${rooms.entries.firstWhere((entry) => entry.value.contains(npc)).key}',
+                                          style: const TextStyle(color: Colors.green),
+                                        ),
+                                    ],
+                                  ],
+                                ),
+                                onTap: () => _handleNPCInteraction(npc),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
 
-                  // NPCs list
-                  Expanded(
-                    child: ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                      itemCount: npcsInRoom.length,
-                      itemBuilder: (context, index) {
-                        final npc = npcsInRoom[index];
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 16),
-                          color: Colors.black87,
-                          child: ListTile(
-                            leading: ColorFiltered(
-                              colorFilter: npc.isEliminated
-                                  ? const ColorFilter.matrix([
-                                      0.2126, 0.7152, 0.0722, 0, 0,
-                                      0.2126, 0.7152, 0.0722, 0, 0,
-                                      0.2126, 0.7152, 0.0722, 0, 0,
-                                      0, 0, 0, 1, 0,
-                                    ])
-                                  : const ColorFilter.matrix([
-                                      1, 0, 0, 0, 0,
-                                      0, 1, 0, 0, 0,
-                                      0, 0, 1, 0, 0,
-                                      0, 0, 0, 1, 0,
-                                    ]),
-                              child: CircleAvatar(
-                                backgroundImage: AssetImage(npc.portraitPath),
-                                radius: 25,
-                              ),
-                            ),
-                            title: Text(
-                              '#${npc.playerNumber} - ${npc.name}${npc.isEliminated ? ' ☠️' : ''}',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: npc.isEliminated ? Colors.red : Colors.white,
-                              ),
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  npc.dialogueOptions[Random().nextInt(npc.dialogueOptions.length)],
-                                  style: TextStyle(color: _getRelationshipColor(npc.relationship)),
-                                ),
-                                if (isGrouping) ...[
-                                  if (invitations.containsKey(npc))
-                                    Text(
-                                      'Inviting you to Room ${invitations[npc]}',
-                                      style: const TextStyle(color: Colors.yellow),
-                                    ),
-                                  if (rooms.values.any((room) => room.contains(npc)))
-                                    Text(
-                                      'In Room ${rooms.entries.firstWhere((entry) => entry.value.contains(npc)).key}',
-                                      style: const TextStyle(color: Colors.green),
-                                    ),
-                                ],
-                              ],
-                            ),
-                            onTap: () => _handleNPCInteraction(npc),
+                  // Start game button
+                  if (!isSpinning && !isGrouping)
+                    Positioned(
+                      bottom: 20,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: ElevatedButton(
+                          onPressed: startMingleRound,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                           ),
-                        );
-                      },
+                          child: const Text(
+                            'Start Mingle Round',
+                            style: TextStyle(fontSize: 20, color: Colors.white),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+
+                  // Elimination overlay
+                  if (isPlayerEliminated)
+                    Container(
+                      color: Colors.red.withOpacity(0.5),
+                      child: const Center(
+                        child: Text(
+                          'ELIMINATED',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 48,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                  // Add player status near game status
+                  if (isGrouping && !isPlayerEliminated)
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      margin: const EdgeInsets.only(top: 120),
+                      color: Colors.black87,
+                      child: Text(
+                        playerRoom == null 
+                            ? '⚠️ You need to join a room!'
+                            : '✅ You are in Room $playerRoom with ${rooms[playerRoom]?.length ?? 0} others',
+                        style: TextStyle(
+                          color: playerRoom == null ? Colors.red : Colors.green,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ),
                 ],
               ),
-
-              // Start game button
-              if (!isSpinning && !isGrouping)
-                Positioned(
-                  bottom: 20,
-                  left: 0,
-                  right: 0,
-                  child: Center(
-                    child: ElevatedButton(
-                      onPressed: startMingleRound,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                      ),
-                      child: const Text(
-                        'Start Mingle Round',
-                        style: TextStyle(fontSize: 20, color: Colors.white),
-                      ),
-                    ),
-                  ),
-                ),
-
-              // Elimination overlay
-              if (isPlayerEliminated)
-                Container(
-                  color: Colors.red.withOpacity(0.5),
-                  child: const Center(
-                    child: Text(
-                      '❌ ELIMINATED ❌',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 48,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-
-              // Add player status near game status
-              if (isGrouping && !isPlayerEliminated)
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  margin: const EdgeInsets.only(top: 120),
-                  color: Colors.black87,
-                  child: Text(
-                    playerRoom == null 
-                        ? '⚠️ You need to join a room!'
-                        : '✅ You are in Room $playerRoom with ${rooms[playerRoom]?.length ?? 0} others',
-                    style: TextStyle(
-                      color: playerRoom == null ? Colors.red : Colors.green,
-                      fontSize: 18,
-                    ),
-                  ),
-                ),
-            ],
+            ),
           ),
-        ),
+          
+          // Debug info overlay - now with visibility toggle
+          if (showDebugInfo)
+            Container(
+              padding: const EdgeInsets.all(16),
+              margin: const EdgeInsets.only(top: 200),
+              color: Colors.black.withOpacity(0.9),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Debug Info:',
+                    style: TextStyle(
+                      color: Colors.red,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ...(_debugMessages.map((msg) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Text(
+                      msg,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ))),
+                ],
+              ),
+            ),
+
+          // Add debug toggle button
+          // Positioned(
+          //   top: 60,
+          //   right: 16,
+          //   child: IconButton(
+          //     icon: const Icon(Icons.bug_report),
+          //     color: showDebugInfo ? Colors.red : Colors.white,
+          //     onPressed: _toggleDebugInfo,
+          //   ),
+          // ),
+
+          // Add flashing overlay during grouping
+          if (isGrouping && !isPlayerEliminated)
+            IgnorePointer(  // Add this wrapper
+              child: AnimatedBuilder(
+                animation: _flashAnimation,
+                builder: (context, child) => Container(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: Alignment.center,
+                      colors: [
+                        _flashAnimation.value ?? Colors.transparent,
+                        Colors.transparent,
+                      ],
+                      stops: const [0.0, 0.4],
+                      radius: 1.5,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
 
   @override
   void dispose() {
+    // Dispose all gunfire players
+    for (var player in _gunfirePlayers) {
+      player.dispose();
+    }
+    _flashController.dispose();
+    _spinController.dispose();
+    _scrollController.dispose();
+    _autoScrollTimer?.cancel();
     _audioPlayer.dispose();
     gameTimer?.cancel();
     super.dispose();
@@ -578,3 +793,4 @@ class CarouselPainter extends CustomPainter {
   @override
   bool shouldRepaint(CustomPainter oldDelegate) => false;
 }
+
