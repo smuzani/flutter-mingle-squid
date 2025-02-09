@@ -17,12 +17,12 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Flutter Demo',
       theme: ThemeData(
-        colorScheme: ColorScheme.dark(
-          primary: Colors.black,
-          surface: Colors.black,
-          background: Colors.black,
+        colorScheme: ColorScheme.light(
+          primary: Colors.pink.shade300,
+          surface: Colors.pink.shade100,
+          background: Colors.pink.shade50,
         ),
-        scaffoldBackgroundColor: Colors.black,
+        scaffoldBackgroundColor: Colors.pink.shade50,
         useMaterial3: true,
       ),
       home: const MyHomePage(title: 'Flutter Demo Home Page'),
@@ -501,7 +501,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                         child: ListView.builder(
                           controller: _scrollController,
                           scrollDirection: Axis.horizontal,
-                          itemCount: 12,
+                          itemCount: 50,
                           itemBuilder: (context, index) {
                             final colors = [
                               Colors.red,
@@ -553,7 +553,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                             final npc = npcsInRoom[index];
                             return Card(
                               margin: const EdgeInsets.only(bottom: 16),
-                              color: Colors.black87,
+                              color: Colors.pink.shade100.withOpacity(0.9),
                               child: ListTile(
                                 leading: ColorFiltered(
                                   colorFilter: npc.isEliminated
@@ -579,7 +579,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                                   style: TextStyle(
                                     fontSize: 20,
                                     fontWeight: FontWeight.bold,
-                                    color: npc.isEliminated ? Colors.red : Colors.white,
+                                    color: npc.isEliminated ? Colors.red : Colors.black,
                                   ),
                                 ),
                                 subtitle: Column(
@@ -637,14 +637,43 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                   if (isPlayerEliminated)
                     Container(
                       color: Colors.red.withOpacity(0.5),
-                      child: const Center(
-                        child: Text(
-                          'ELIMINATED',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 48,
-                            fontWeight: FontWeight.bold,
-                          ),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              'ELIMINATED',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 48,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            ElevatedButton(
+                              onPressed: () {
+                                setState(() {
+                                  isPlayerEliminated = false;
+                                  // Reset all NPCs
+                                  for (var npc in npcsInRoom) {
+                                    npc.isEliminated = false;
+                                  }
+                                  // Clear rooms and invitations
+                                  rooms.clear();
+                                  invitations.clear();
+                                  playerRoom = null;
+                                });
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                              ),
+                              child: const Text(
+                                'Play Again',
+                                style: TextStyle(fontSize: 20, color: Colors.red),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -699,17 +728,6 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 ],
               ),
             ),
-
-          // Add debug toggle button
-          // Positioned(
-          //   top: 60,
-          //   right: 16,
-          //   child: IconButton(
-          //     icon: const Icon(Icons.bug_report),
-          //     color: showDebugInfo ? Colors.red : Colors.white,
-          //     onPressed: _toggleDebugInfo,
-          //   ),
-          // ),
 
           // Add flashing overlay during grouping
           if (isGrouping && !isPlayerEliminated)
